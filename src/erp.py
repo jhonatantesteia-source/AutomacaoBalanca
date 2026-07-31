@@ -72,4 +72,22 @@ class ERP:
             class_name="TButton"
         ).click()
 
-        logger.success("Arquivo gerado.")
+        time.sleep(2)
+
+        # Localiza a janela da mensagem de sucesso
+        msg = self.app.window(title_re=".*ATENÇÃO.*")
+        msg.wait("visible", timeout=10)
+
+        logger.success("Mensagem de confirmação encontrada.")
+
+        #Da o foco na janela
+        msg.set_focus()
+         
+        time.sleep(0.5)    
+
+        # Clica no botão "ENTER" (botão padrao da janela)
+        msg.type_keys("{ENTER}")
+
+        time.sleep(2)
+        
+        logger.success("Arquivo gerado e confirmado.")
