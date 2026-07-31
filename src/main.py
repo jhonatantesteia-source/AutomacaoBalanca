@@ -1,8 +1,12 @@
+from erp import ERP
 from logger import logger
-from automacao import testar_bloco_notas
 
-logger.info("Iniciando teste.")
+logger.info("Iniciando automação")
 
-testar_bloco_notas()
+erp = ERP()
 
-logger.info("Fim")
+erp.conectar_exportacao()
+
+erp.gerar_arquivo_balanca()
+
+logger.success("Processo finalizado")
