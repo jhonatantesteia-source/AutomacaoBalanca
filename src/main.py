@@ -1,4 +1,5 @@
 from erp import ERP
+from balanca import Balanca
 from logger import logger
 
 def main():
@@ -11,6 +12,12 @@ def main():
         erp.abrir_gerador_balanca()
         erp.conectar_exportacao()
         erp.gerar_arquivo_balanca()
+
+        balanca = Balanca()
+
+        balanca.conectar()
+        balanca.importar_arquivo()
+        balanca.enviar_carga()
 
         logger.success("Processo concluído com sucesso!")
 
