@@ -93,47 +93,7 @@ class Balanca:
 
     def enviar_carga(self):
         """
-        Confirma e envia a carga para as balanças.
-
-        As opções "Todas as balanças" e "Completa" já vêm marcadas
-        por padrão na tela (confirmado via inspeção da UI), então
-        não precisamos selecioná-las — apenas acionar o envio.
+        Ainda será implementado após mapearmos
+        a tela de carga.
         """
         self.abrir_carga()
-
-        logger.info("Aguardando tela de solicitação de carga...")
-
-        janela_carga = self.janela.child_window(
-            auto_id="frSolicitarCargaBalancas",
-            control_type="Window"
-        )
-
-        janela_carga.wait("visible", timeout=10)
-
-        logger.info("Enviando solicitação de carga...")
-
-        janela_carga.child_window(
-            auto_id="btnSolicitaCarga",
-            control_type="Button"
-        ).wrapper_object().click_input()
-
-        logger.info(
-            "Carga solicitada. Aguardando transmissão "
-            "(espera fixa provisória — ver TODO)..."
-        )
-
-        # TODO: substituir esta espera fixa por um acompanhamento real
-        # do status na grid "Estado de operação" (dtGrdEstadoOperacao),
-        # assim que soubermos qual texto a coluna "Estado das Lojas"
-        # mostra durante e após a transmissão. Ver
-        # dump_mgv_transmissao.py em src/tests/.
-        sleep(15)
-
-        logger.info("Fechando tela de solicitação de carga...")
-
-        janela_carga.child_window(
-            auto_id="btnFechar",
-            control_type="Button"
-        ).wrapper_object().click_input()
-
-        logger.success("Carga enviada.")
