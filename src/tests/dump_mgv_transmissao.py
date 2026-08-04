@@ -29,7 +29,7 @@ def localizar_linha_estado(tabela):
     return linhas[0] if linhas else None
 
 
-def dump_linha(linha):
+def dump_linha(linha): #jhfdjhfdkagcgsacasgcg
     textos = []
     for cel in linha.children():
         try:
