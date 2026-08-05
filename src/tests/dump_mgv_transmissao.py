@@ -1,44 +1,44 @@
 """
-Observa a grid "Estado de operação" (dtGrdEstadoOperacao) da janela
-principal do MGV antes, durante e depois do envio de uma carga, e
-detecta automaticamente qualquer popup/diálogo que apareça ao clicar
-em "Enviar" — varrendo todas as janelas de topo do desktop, não só
-os descendentes de frPrincipal (um popup normalmente é uma janela
-de topo separada, não um filho de frPrincipal).
+Investiga o fim da transmissão de carga: abre a tela de Carga, envia,
+aciona "Acompanhar", varre a janela "Estado da transmissão"
+(frConsultarEstadoTransmissao) e monitora até as grids de
+comunicações pendentes (dgvProgresso / dgvSolicitacoes) esvaziarem
+e ficarem estáveis — sinal de que a transmissão terminou. Em seguida
+fecha a janela de transmissão e a tela de solicitação de carga.
 
-ATENÇÃO: este script clica de verdade em "Enviar" na tela de Carga,
-ou seja, DISPARA UMA TRANSMISSÃO REAL para as balanças físicas.
-Ele pede confirmação antes de prosseguir.
+ATENÇÃO: este script dispara uma transmissão REAL para as balanças
+físicas. Pede confirmação antes de prosseguir.
 """
 
 import time
 
 from loguru import logger
 from pywinauto import Desktop
-
-COLUNAS = ["Código", "Lojas", "Estado das Lojas", "Andamento", "Observações"]
-
-
-def localizar_linha_estado(tabela):
-    """Retorna a primeira linha de dados da grid (ignora o cabeçalho)."""
-    linhas = [
-        c for c in tabela.children()
-        if c.element_info.control_type == "Custom"
-        and c.window_text() != "Linha Superior"
-    ]
-    return linhas[0] if linhas else None
+from pywinauto.keyboard import send_keys
+from pywinauto.timings import TimeoutError as PywinautoTimeoutError
 
 
-def dump_linha(linha): #jhfdjhfdkagcgsacasgcg
-    textos = []
-    for cel in linha.children():
-        try:
-            textos.append(cel.window_text())
-        except Exception:
-            textos.append("?")
+def conectar_janela(candidatos, timeout=15, intervalo=0.5, descricao="janela"):
+    """
+    Tenta várias estratégias de busca (lista de funções sem argumento
+    que retornam uma WindowSpecification) até uma existir e estar
+    visível. Retorna a WindowSpecification (não resolve para wrapper),
+    para continuar permitindo .child_window() encadeado.
+    """
+    inicio = time.time()
 
-    partes = [f"{nome}={valor!r}" for nome, valor in zip(COLUNAS, textos)]
-    logger.info(" | ".join(partes))
+    while (time.time() - inicio) < timeout:
+        for obter_spec in candidatos:
+            try:
+                spec = obter_spec()
+                if spec.exists() and spec.is_visible():
+                    return spec
+            except Exception:
+                pass
+
+        time.sleep(intervalo)
+
+    raise PywinautoTimeoutError(f"{descricao} não encontrada em {timeout}s.")
 
 
 def assinatura(ctrl):
@@ -54,64 +54,95 @@ def assinatura(ctrl):
         return None
 
 
-def dump_novos_controles(raiz, conhecidos):
-    """Registra e imprime apenas os controles novos encontrados a partir de `raiz`."""
-    novos = 0
-
-    for ctrl in raiz.descendants():
-        sig = assinatura(ctrl)
-
-        if not sig or sig in conhecidos:
-            continue
-
-        conhecidos.add(sig)
-        novos += 1
-
-        try:
-            rect = ctrl.rectangle()
-        except Exception:
-            rect = None
-
+def dump_completo(raiz, nivel=0):
+    try:
         logger.info(
-            "[NOVO] tipo={!r} texto={!r} auto_id={!r} class={!r} rect={}",
-            sig[0], sig[1], sig[2], sig[3], rect,
+            "{}{!r} | control_type={} | auto_id={!r} | class={!r}",
+            " " * nivel,
+            raiz.window_text(),
+            raiz.element_info.control_type,
+            raiz.element_info.automation_id,
+            raiz.class_name(),
         )
+    except Exception:
+        pass
 
-    return novos
+    try:
+        for filho in raiz.children():
+            dump_completo(filho, nivel + 4)
+    except Exception:
+        pass
 
 
-def mapear_janelas_topo():
+def extrair_texto_elemento(item) -> str:
     """
-    Retorna {handle: janela} com todas as janelas de topo visíveis
-    no desktop agora — usado para detectar popups por diferença,
-    já que eles não são descendentes de frPrincipal.
+    Extrai o texto real de uma célula do DataGridView (WinForms).
+
+    IMPORTANTE: quando a célula não tem valor "classificado" pela UIA,
+    window_text() retorna um nome de fallback tipo
+    "Situação Linha 0, Não classificado." — isso NÃO é o valor da
+    célula, é só o Accessible Name padrão do .NET, e ele CONTÉM a
+    palavra "classificado" mesmo quando há valor de verdade em outro
+    lugar. Por isso: rejeitamos qualquer texto que contenha "não
+    classificado" (case-insensitive) e priorizamos
+    LegacyIAccessible/ValuePattern antes de window_text(), pois são
+    eles que costumam expor o valor real das células de DataGridView.
     """
-    janelas = {}
-    for w in Desktop(backend="uia").windows():
+
+    def valido(txt):
+        return bool(txt) and "não classificado" not in txt.lower()
+
+    try:
+        legacy = item.iface_legacy_iaccessible
+        val = legacy.CurrentValue or legacy.CurrentName
+        if valido(val):
+            return val.strip()
+    except Exception:
+        pass
+
+    try:
+        val = item.iface_value.CurrentValue
+        if valido(val):
+            return val.strip()
+    except Exception:
+        pass
+
+    try:
+        txt = item.window_text()
+        if valido(txt):
+            return txt.strip()
+    except Exception:
+        pass
+
+    return ""
+
+
+def linhas_de_dados(janela_transmissao, grid_id):
+    """Retorna as linhas de dados (exclui 'Linha Superior') de uma grid, ou [] se não achar."""
+    try:
+        grid = janela_transmissao.child_window(auto_id=grid_id)
+        return [
+            c for c in grid.children()
+            if c.element_info.control_type == "Custom"
+            and c.window_text() != "Linha Superior"
+        ]
+    except Exception:
+        return []
+
+
+def status_das_linhas(janela_transmissao, grid_id):
+    """Retorna uma lista de listas de valores de célula, uma por linha de dados da grid."""
+    resultado = []
+    for linha in linhas_de_dados(janela_transmissao, grid_id):
         try:
-            janelas[w.handle] = w
+            valores = [extrair_texto_elemento(c) for c in linha.children()]
         except Exception:
-            pass
-    return janelas
+            valores = []
+        resultado.append(valores)
+    return resultado
 
 
-def detectar_popup_novo(janelas_antes, timeout=5):
-    """Aguarda até `timeout`s por uma janela de topo nova e a retorna (ou None)."""
-    inicio = time.time()
-
-    while time.time() - inicio < timeout:
-        atuais = mapear_janelas_topo()
-        novas = [h for h in atuais if h not in janelas_antes]
-
-        if novas:
-            return atuais[novas[0]]
-
-        time.sleep(0.3)
-
-    return None
-
-
-def descrever_botoes(janela):
+def listar_botoes(janela):
     botoes = []
     for ctrl in janela.descendants(control_type="Button"):
         try:
@@ -128,100 +159,140 @@ def main():
     principal.wait("visible", timeout=20)
     principal.set_focus()
 
-    tabela = principal.child_window(
-        auto_id="dtGrdEstadoOperacao",
-        control_type="Table",
-    )
-
-    logger.info("Estado ANTES do envio:")
-
-    linha = localizar_linha_estado(tabela)
-    if linha:
-        dump_linha(linha)
-    else:
-        logger.warning("Nenhuma linha encontrada.")
-
-    confirmar = input(
-        "\nATENÇÃO: isso vai abrir a tela de Carga, clicar em "
-        "'Enviar' e transmitir de verdade para as balanças.\n"
-        "Digite 'sim' para continuar: "
-    )
-
-    if confirmar.strip().lower() != "sim":
-        logger.warning("Cancelado pelo usuário. Nada foi enviado.")
-        return
+    
 
     logger.info("Abrindo tela de Carga...")
 
     principal.child_window(
-        title="Carga",
-        control_type="Button",
+        title="Carga", control_type="Button"
     ).wrapper_object().click_input()
 
-    time.sleep(1.5)
-
-    janela_carga = principal.child_window(
-        auto_id="frSolicitarCargaBalancas",
-        control_type="Window",
+    janela_carga = conectar_janela(
+        [
+            lambda: principal.child_window(
+                auto_id="frSolicitarCargaBalancas", control_type="Window"
+            ),
+            lambda: Desktop(backend="uia").window(auto_id="frSolicitarCargaBalancas"),
+        ],
+        descricao="janela de solicitação de carga",
     )
-    janela_carga.wait("visible", timeout=10)
 
-    logger.info("Mapeando controles e janelas existentes...")
-
-    conhecidos = set()
-    for ctrl in principal.descendants():
-        sig = assinatura(ctrl)
-        if sig:
-            conhecidos.add(sig)
-
-    janelas_antes = mapear_janelas_topo()
-
-    logger.info(
-        f"{len(conhecidos)} controles e {len(janelas_antes)} janelas conhecidas."
-    )
+    janela_carga.set_focus()
+    time.sleep(0.5)
 
     logger.info("Clicando em Enviar...")
 
     janela_carga.child_window(
-        auto_id="btnSolicitaCarga",
-        control_type="Button",
+        auto_id="btnSolicitaCarga", control_type="Button"
     ).wrapper_object().click_input()
 
-    logger.info("Enviado. Procurando popup de confirmação (até 5s)...")
+    time.sleep(1.2)
 
-    popup = detectar_popup_novo(janelas_antes, timeout=5)
+    logger.info("Acionando 'Acompanhar' via {LEFT}{ENTER}...")
 
-    if popup:
+    send_keys("{LEFT}", pause=0.2)
+    send_keys("{ENTER}", pause=0.2)
+
+    logger.info("Conectando à janela de estado da transmissão...")
+
+    janela_transmissao = conectar_janela(
+        [
+            lambda: Desktop(backend="uia").window(auto_id="frConsultarEstadoTransmissao"),
+            lambda: principal.child_window(
+                auto_id="frConsultarEstadoTransmissao", control_type="Window"
+            ),
+            lambda: janela_carga.child_window(
+                auto_id="frConsultarEstadoTransmissao", control_type="Window"
+            ),
+        ],
+        descricao="janela de estado da transmissão",
+    )
+
+    logger.info("=" * 80)
+    logger.info("DUMP COMPLETO DA JANELA DE TRANSMISSÃO (assim que abriu)")
+    logger.info("=" * 80)
+    dump_completo(janela_transmissao.wrapper_object())
+
+    logger.info(
+        "Monitorando dgvProgresso/dgvSolicitacoes até esvaziarem e "
+        "ficarem estáveis (timeout 180s)..."
+    )
+
+    viu_linhas = False
+    vazio_desde = None
+    concluiu = False
+    inicio = time.time()
+
+    while (time.time() - inicio) < 180:
+        linhas_progresso = status_das_linhas(janela_transmissao, "dgvProgresso")
+        linhas_solicitacoes = status_das_linhas(janela_transmissao, "dgvSolicitacoes")
+        total_linhas = len(linhas_progresso) + len(linhas_solicitacoes)
+
+        logger.debug(f"dgvProgresso ({len(linhas_progresso)} linha(s)): {linhas_progresso}")
+        logger.debug(f"dgvSolicitacoes ({len(linhas_solicitacoes)} linha(s)): {linhas_solicitacoes}")
+
+        if total_linhas > 0:
+            viu_linhas = True
+            vazio_desde = None
+        elif viu_linhas:
+            if vazio_desde is None:
+                vazio_desde = time.time()
+                logger.info("Grids de pendências esvaziaram. Confirmando estabilidade...")
+            elif (time.time() - vazio_desde) >= 3:
+                logger.success(
+                    "Transmissão concluída (grids de pendências vazias e estáveis)."
+                )
+                concluiu = True
+                break
+
+        time.sleep(2)
+
+    if not concluiu:
+        logger.error("Timeout sem confirmar esvaziamento estável das grids.")
+
+    logger.info("=" * 80)
+    logger.info("DUMP COMPLETO DA JANELA DE TRANSMISSÃO (após conclusão/timeout)")
+    logger.info("=" * 80)
+    dump_completo(janela_transmissao.wrapper_object())
+
+    botoes = listar_botoes(janela_transmissao)
+    logger.info(f"Botões disponíveis na janela de transmissão: {botoes}")
+
+    logger.info("Tentando fechar a janela de transmissão via 'Sair' (btnSair)...")
+
+    try:
+        janela_transmissao.child_window(
+            auto_id="btnSair", control_type="Button"
+        ).wrapper_object().click_input()
+        logger.success("Cliquei em 'Sair'.")
+    except Exception as e:
+        logger.warning(f"Não consegui clicar em 'Sair': {e}")
+
+    time.sleep(1.5)
+
+    try:
+        ainda_aberta_transmissao = janela_transmissao.exists() and janela_transmissao.is_visible()
+    except Exception:
+        ainda_aberta_transmissao = False
+    logger.info(f"Janela de transmissão ainda aberta? {ainda_aberta_transmissao}")
+
+    try:
+        ainda_aberta_carga = janela_carga.exists() and janela_carga.is_visible()
+    except Exception:
+        ainda_aberta_carga = False
+    logger.info(f"Janela de solicitação de carga ainda aberta? {ainda_aberta_carga}")
+
+    if ainda_aberta_carga:
+        logger.info("Fechando janela de solicitação de carga via 'Sair' (btnFechar)...")
         try:
-            titulo = popup.window_text()
-            auto_id = popup.element_info.automation_id
-            classe = popup.class_name()
-        except Exception:
-            titulo, auto_id, classe = "?", "?", "?"
+            janela_carga.child_window(
+                auto_id="btnFechar", control_type="Button"
+            ).wrapper_object().click_input()
+            logger.success("Janela de solicitação de carga fechada.")
+        except Exception as e:
+            logger.warning(f"Não consegui fechar a janela de solicitação de carga: {e}")
 
-        logger.success(
-            "Popup detectado: título={!r} auto_id={!r} classe={!r}",
-            titulo, auto_id, classe,
-        )
-
-        botoes = descrever_botoes(popup)
-        logger.info(f"Botões do popup: {botoes}")
-        logger.warning(
-            "Popup NÃO foi fechado automaticamente por este script — "
-            "feche manualmente e anote qual botão usar, para "
-            "automatizarmos isso na próxima versão."
-        )
-    else:
-        logger.info("Nenhum popup novo detectado nesses 5s.")
-
-    logger.info("Monitorando novos controles em frPrincipal por 10 segundos...")
-
-    for i in range(10):
-        logger.info(f"===== t+{i + 1}s =====")
-        dump_novos_controles(principal, conhecidos)
-        time.sleep(1)
-
-    logger.info("Fim do monitoramento.")
+    logger.info("Fim do fluxo investigativo.")
 
 
 if __name__ == "__main__":
