@@ -1,14 +1,65 @@
+import subprocess
+
 from pywinauto.application import Application
 from loguru import logger
 import time
+from pywinauto.keyboard import send_keys
+
+
+from config import CAMINHO_GANSO, TIMEOUT_ABERTURA_GANSO, LOGIN_GANSO, SENHA_GANSO
 
 
 class ERP:
 
-    def __init__(self):
+    def __init__(self, caminho_executavel=CAMINHO_GANSO):
         self.app = None
         self.janela_principal = None
         self.janela_exportacao = None
+        self.caminho_executavel = caminho_executavel
+
+    def esta_aberto(self) -> bool:
+        """Verifica se o Ganso já está rodando, sem levantar exceção se não estiver."""
+        try:
+            Application(backend="win32").connect(
+                title_re=".*Ganso Gestão Empresarial.*"
+            )
+            return True
+        except Exception:
+            return False
+
+    def abrir(self, timeout=TIMEOUT_ABERTURA_GANSO, intervalo=2):
+        """
+        Garante que o Ganso está aberto, iniciando o executável se
+        necessário. Não faz nada se já estiver rodando (permite rodar
+        o fluxo tanto agendado, com tudo fechado, quanto manualmente,
+        com os programas já abertos).
+        """
+        if self.esta_aberto():
+            logger.info("Ganso já está aberto.")
+            return
+
+        logger.info(f"Abrindo o Ganso ({self.caminho_executavel})...")
+
+        subprocess.Popen(self.caminho_executavel)
+
+        inicio = time.time()
+
+        while (time.time() - inicio) < timeout:
+            if self.esta_aberto():
+                logger.success("Ganso abriu.")
+                return
+
+            time.sleep(intervalo)
+
+        raise TimeoutError(f"Ganso não abriu em {timeout}s.")
+
+    send_keys("{ENTER}")  # Fecha janela backup
+   # send_keys("{2}{7}")  # digita usuario
+    send_keys(LOGIN_GANSO)  # digita usuario
+    send_keys("{TAB}")  # navega para o campo de senha
+   # send_keys("{5}{4}{6}{6}")  # digita senha
+    send_keys(SENHA_GANSO)  # digita senha
+    send_keys("{ENTER}{ENTER}")  # envia o formulário
 
     def conectar_principal(self):
 

@@ -1,3 +1,4 @@
+import subprocess
 import time
 from time import sleep
 
@@ -5,13 +6,46 @@ from pywinauto import Desktop
 from pywinauto.keyboard import send_keys
 from pywinauto.timings import TimeoutError as PywinautoTimeoutError
 
+from config import CAMINHO_MGV, TIMEOUT_ABERTURA_MGV
 from logger import logger
 
 
 class Balanca:
-    def __init__(self):
+    def __init__(self, caminho_executavel=CAMINHO_MGV):
         self.app = None
         self.janela = None
+        self.caminho_executavel = caminho_executavel
+
+    def esta_aberto(self) -> bool:
+        """Verifica se o MGV já está rodando, sem levantar exceção se não estiver."""
+        try:
+            return Desktop(backend="uia").window(auto_id="frPrincipal").exists()
+        except Exception:
+            return False
+
+    def abrir(self, timeout=TIMEOUT_ABERTURA_MGV, intervalo=2):
+        """
+        Garante que o MGV está aberto, iniciando o executável se
+        necessário. Não faz nada se já estiver rodando.
+        """
+        if self.esta_aberto():
+            logger.info("MGV já está aberto.")
+            return
+
+        logger.info(f"Abrindo o MGV ({self.caminho_executavel})...")
+
+        subprocess.Popen(self.caminho_executavel)
+
+        inicio = time.time()
+
+        while (time.time() - inicio) < timeout:
+            if self.esta_aberto():
+                logger.success("MGV abriu.")
+                return
+
+            sleep(intervalo)
+
+        raise TimeoutError(f"MGV não abriu em {timeout}s.")
 
     def conectar(self):
         """Conecta na janela principal do MGV."""

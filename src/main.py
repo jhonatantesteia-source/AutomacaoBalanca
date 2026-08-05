@@ -8,6 +8,7 @@ def main():
 
         erp = ERP()
 
+        erp.abrir()
         erp.conectar_principal()
         erp.abrir_gerador_balanca()
         erp.conectar_exportacao()
@@ -15,6 +16,7 @@ def main():
 
         balanca = Balanca()
 
+        balanca.abrir()
         balanca.conectar()
         balanca.importar_arquivo()
         balanca.enviar_carga()
