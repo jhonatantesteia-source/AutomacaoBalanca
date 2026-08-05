@@ -60,6 +60,7 @@ class Balanca:
         self.janela.set_focus()
 
         logger.success("MGV conectado.")
+        time.sleep(2)
 
     def abrir_importacao(self):
         """Abre a tela de Importação."""

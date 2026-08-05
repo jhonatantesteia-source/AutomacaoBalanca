@@ -1,7 +1,6 @@
 import subprocess
 
 from pywinauto.application import Application
-from pywinauto import Desktop
 from loguru import logger
 import time
 from pywinauto.keyboard import send_keys
@@ -22,7 +21,7 @@ class ERP:
         """Verifica se o Ganso já está rodando, sem levantar exceção se não estiver."""
         try:
             Application(backend="win32").connect(
-                class_name="TFrmPrincipalGanso"
+                title_re=".*Ganso Gestão Empresarial.*"
             )
             return True
         except Exception:
@@ -43,11 +42,16 @@ class ERP:
 
         subprocess.Popen(self.caminho_executavel)
 
+        # O Ganso costuma exibir um aviso (ex.: sobre backup) antes da
+        # tela de login. Como a janela recém-aberta ganha o foco do
+        # Windows automaticamente, esse ENTER vai para o aviso, e não
+        # para o terminal.
+        time.sleep(3)
+        send_keys("{ENTER}")
+
         inicio = time.time()
 
         while (time.time() - inicio) < timeout:
-            self._fechar_aviso_atencao()
-
             if self.esta_aberto():
                 logger.success("Ganso abriu.")
                 self._fazer_login()
@@ -57,108 +61,35 @@ class ERP:
 
         raise TimeoutError(f"Ganso não abriu em {timeout}s.")
 
-    def _fechar_aviso_atencao(self):
-        """
-        Fecha a janela de aviso 'ATENÇÃO' (classe Dialog) que costuma
-        aparecer antes da tela de login, se ela estiver na tela.
-        Não faz nada (e não levanta exceção) se ela não existir.
-
-        Usa Desktop(...).windows() em vez de Application.connect(),
-        porque esse último não estava conseguindo localizar essa
-        janela de forma confiável nesta máquina (provavelmente por
-        haver várias outras janelas de classe 'Dialog' no sistema).
-        """
-        try:
-            for janela in Desktop(backend="win32").windows():
-                titulo = janela.window_text()
-
-                if not titulo or not titulo.startswith("ATEN"):
-                    continue
-
-                if janela.friendly_class_name() != "Dialog":
-                    continue
-
-                if not janela.is_visible():
-                    continue
-
-                logger.info(f"Aviso detectado ('{titulo}'), fechando...")
-                janela.set_focus()
-                time.sleep(0.3)
-                janela.type_keys("{ENTER}")
-                time.sleep(0.5)
-                logger.success("Aviso fechado.")
-                return
-        except Exception as e:
-            logger.debug(f"Nenhum aviso encontrado ou erro ao fechar: {e}")
-
     def _fazer_login(self):
         """
         Preenche usuário e senha na tela de login do Ganso.
         Só é chamado depois que a janela do Ganso foi detectada
         (ou seja, dentro de abrir(), nunca no import do módulo).
-
-        A tela de login é uma janela própria, separada da janela
-        principal (TFrmPrincipalGanso): título 'Acesso ao Sistema',
-        classe 'TFrmAcesso'.
         """
         logger.info("Realizando login no Ganso...")
 
-        # Espera a tela 'Acesso ao Sistema' aparecer (pode levar um
-        # instante depois do aviso 'ATENÇÃO' fechar). Continua tentando
-        # fechar o aviso aqui também, porque ele pode surgir só agora
-        # (depois que a janela principal já foi detectada em abrir()).
-        janela_login = None
-        inicio = time.time()
+        # Dá tempo da tela de login terminar de carregar/ganhar foco
+        time.sleep(1.5)
 
-        while (time.time() - inicio) < 10:
-            self._fechar_aviso_atencao()
-
-            try:
-                app_login = Application(backend="win32").connect(
-                    class_name="TFrmAcesso"
-                )
-                candidata = app_login.window(class_name="TFrmAcesso")
-                if candidata.exists():
-                    janela_login = candidata
-                    break
-            except Exception:
-                pass
-
-            time.sleep(0.5)
-
-        if janela_login is None:
-            logger.warning(
-                "Tela 'Acesso ao Sistema' não encontrada; "
-                "login pode já ter sido feito ou o fluxo mudou."
-            )
-            return
-
-        janela_login.wait("visible", timeout=10)
-        janela_login.set_focus()
-
-        # Dá tempo da janela terminar de ganhar foco de fato
-        time.sleep(1)
-
-        janela_login.type_keys(LOGIN_GANSO, with_spaces=True)  # digita usuario
-        time.sleep(0.3)
-        janela_login.type_keys("{TAB}")                        # navega para o campo de senha
-        time.sleep(0.3)
-        janela_login.type_keys(SENHA_GANSO, with_spaces=True)  # digita senha
-        time.sleep(0.3)
-        janela_login.type_keys("{ENTER}{ENTER}")                # envia o formulário
+        send_keys("{ENTER}")         # Fecha janela de aviso de backup, se houver
+        send_keys(LOGIN_GANSO)       # digita usuario
+        send_keys("{TAB}")           # navega para o campo de senha
+        send_keys(SENHA_GANSO)       # digita senha
+        send_keys("{ENTER}{ENTER}")  # envia o formulário
 
         logger.success("Login enviado.")
 
     def conectar_principal(self):
 
-        logger.info("Conectando à janela principal do Ganso...")
+        logger.info("Conectando ao Ganso Gestão Empresarial...")
 
         self.app = Application(backend="win32").connect(
-            class_name="TFrmPrincipalGanso"
+            title_re=".*Ganso Gestão Empresarial.*"
         )
 
         self.janela_principal = self.app.window(
-            class_name="TFrmPrincipalGanso"
+            title_re=".*Ganso Gestão Empresarial.*"
         )
 
         self.janela_principal.set_focus()
@@ -214,9 +145,7 @@ class ERP:
         time.sleep(2)
 
         # Localiza a janela da mensagem de sucesso
-        # (usa só o prefixo sem acento para evitar problemas de encoding
-        # na comparação do título — ver correção em _fechar_aviso_atencao)
-        msg = self.app.window(title_re="ATEN.*")
+        msg = self.app.window(title_re=".*ATENÇÃO.*")
         msg.wait("visible", timeout=10)
 
         logger.success("Mensagem de confirmação encontrada.")
