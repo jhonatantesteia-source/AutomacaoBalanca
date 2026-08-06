@@ -10,6 +10,9 @@ logs/
 .env
 .env.*
 
+# Credenciais (Gmail App Password, CallMeBot API Key, login do Ganso)
+src/config.py
+
 dist/
 build/
 

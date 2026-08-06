@@ -10,6 +10,23 @@ from config import CAMINHO_MGV, TIMEOUT_ABERTURA_MGV
 from logger import logger
 
 
+class FalhaTransmissaoBalanca(Exception):
+    """
+    Levantada quando a transmissão da carga termina, mas uma ou mais
+    balanças falharam na comunicação. Guarda a lista das balanças com
+    falha para que quem tratar o erro (ex: notificação) possa informar
+    exatamente quais falharam.
+    """
+
+    def __init__(self, balancas_com_falha):
+        self.balancas_com_falha = balancas_com_falha
+        mensagem = (
+            "Transmissão da carga terminou com falha na(s) balança(s): "
+            f"{', '.join(balancas_com_falha)}"
+        )
+        super().__init__(mensagem)
+
+
 class Balanca:
     def __init__(self, caminho_executavel=CAMINHO_MGV):
         self.app = None
@@ -60,7 +77,7 @@ class Balanca:
         self.janela.set_focus()
 
         logger.success("MGV conectado.")
-        time.sleep(2)
+        time.sleep(2)  # Aguarda a tela principal carregar completamente
 
     def abrir_importacao(self):
         """Abre a tela de Importação."""
@@ -242,11 +259,13 @@ class Balanca:
 
         return progresso
 
-    def _avaliar_resultado(self, ultimo_status: dict) -> str:
+    def _avaliar_resultado(self, ultimo_status: dict):
         """
         Avalia o último status conhecido de cada balança (capturado
         antes da linha sumir da grid) para decidir se a transmissão
         terminou com sucesso ou com falha em alguma balança.
+
+        Retorna uma tupla (status, balancas_com_falha).
         """
         falhas = [
             chave for chave, valores in ultimo_status.items()
@@ -255,12 +274,12 @@ class Balanca:
 
         if falhas:
             logger.warning(f"Balanças com falha na comunicação: {falhas}")
-            return "TERMINADO_COM_FALHA"
+            return "TERMINADO_COM_FALHA", falhas
 
         logger.success("Transmissão concluída com sucesso em todas as balanças.")
-        return "CONCLUIDO"
+        return "CONCLUIDO", []
 
-    def _aguardar_transmissao(self, janela_transmissao, timeout=180, intervalo=2, estabilidade=3) -> str:
+    def _aguardar_transmissao(self, janela_transmissao, timeout=180, intervalo=2, estabilidade=3):
         """
         Acompanha a transmissão até as grids de comunicações pendentes
         (dgvProgresso / dgvSolicitacoes) esvaziarem e ficarem estáveis
@@ -271,6 +290,8 @@ class Balanca:
         "Falha na comunicação" depois de esgotar as tentativas. Por
         isso guardamos o último status conhecido de cada balança antes
         da linha desaparecer, e avaliamos isso no final.
+
+        Retorna uma tupla (status, balancas_com_falha).
         """
         logger.info("Acompanhando transmissão...")
 
@@ -300,7 +321,7 @@ class Balanca:
             sleep(intervalo)
 
         logger.error("Timeout aguardando o esvaziamento das grids de transmissão.")
-        return "TIMEOUT"
+        return "TIMEOUT", []
 
     def enviar_carga(self):
         """
@@ -343,13 +364,13 @@ class Balanca:
             escopos_extra=[janela_carga],
         )
 
-        resultado = self._aguardar_transmissao(janela_transmissao)
+        resultado, balancas_com_falha = self._aguardar_transmissao(janela_transmissao)
 
         if resultado == "TIMEOUT":
             raise RuntimeError("Timeout aguardando a finalização da transmissão da carga.")
 
         if resultado == "TERMINADO_COM_FALHA":
-            raise RuntimeError("Transmissão da carga terminou com falha em uma ou mais balanças.")
+            raise FalhaTransmissaoBalanca(balancas_com_falha)
 
         logger.info("Fechando janela de transmissão...")
 
