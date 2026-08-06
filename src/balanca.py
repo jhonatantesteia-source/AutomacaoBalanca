@@ -13,16 +13,19 @@ from logger import logger
 class FalhaTransmissaoBalanca(Exception):
     """
     Levantada quando a transmissão da carga termina, mas uma ou mais
-    balanças falharam na comunicação. Guarda a lista das balanças com
-    falha para que quem tratar o erro (ex: notificação) possa informar
-    exatamente quais falharam.
+    balanças falharam na comunicação OU tiveram seu status final não
+    confirmado (a linha sumiu da grid sem nunca mostrarmos "Sucesso na
+    comunicação" — pode ser uma falha rápida que o polling não pegou a
+    tempo). Guarda a lista das balanças nessa situação para que quem
+    tratar o erro (ex: notificação) possa informar exatamente quais
+    precisam ser verificadas.
     """
 
     def __init__(self, balancas_com_falha):
         self.balancas_com_falha = balancas_com_falha
         mensagem = (
-            "Transmissão da carga terminou com falha na(s) balança(s): "
-            f"{', '.join(balancas_com_falha)}"
+            "Transmissão da carga terminou com falha ou status não "
+            f"confirmado na(s) balança(s): {', '.join(balancas_com_falha)}"
         )
         super().__init__(mensagem)
 
@@ -265,33 +268,57 @@ class Balanca:
         antes da linha sumir da grid) para decidir se a transmissão
         terminou com sucesso ou com falha em alguma balança.
 
-        Retorna uma tupla (status, balancas_com_falha).
+        IMPORTANTE: exigimos confirmação EXPLÍCITA de "sucesso" —
+        não basta a ausência da palavra "falha". Se a linha sumir da
+        grid entre dois ciclos de polling logo após uma falha rápida,
+        o último status capturado pode ser um estado neutro (ex.:
+        "Verificando balança...") sem nunca termos visto o texto de
+        falha. Assumir sucesso nesse caso já gerou um aviso de
+        "sucesso" para uma balança que na verdade falhou. Por isso
+        qualquer balança sem confirmação explícita de sucesso entra
+        no alerta, mesmo que não tenhamos capturado a palavra "falha".
+
+        Retorna uma tupla (status, balancas_com_problema).
         """
-        falhas = [
-            chave for chave, valores in ultimo_status.items()
-            if any("falha" in v.lower() for v in valores)
-        ]
+        falhas = []
+        indeterminadas = []
+
+        for chave, valores in ultimo_status.items():
+            textos = [v.lower() for v in valores]
+
+            if any("falha" in t for t in textos):
+                falhas.append(chave)
+            elif not any("sucesso" in t for t in textos):
+                indeterminadas.append(chave)
 
         if falhas:
-            logger.warning(f"Balanças com falha na comunicação: {falhas}")
-            return "TERMINADO_COM_FALHA", falhas
+            logger.warning(f"Balanças com falha confirmada: {falhas}")
 
-        logger.success("Transmissão concluída com sucesso em todas as balanças.")
+        if indeterminadas:
+            logger.warning(
+                "Balanças sem confirmação explícita de sucesso (linha sumiu "
+                f"da grid sem nunca mostrar 'Sucesso na comunicação'): {indeterminadas}"
+            )
+
+        if falhas or indeterminadas:
+            return "TERMINADO_COM_FALHA", falhas + indeterminadas
+
+        logger.success("Transmissão concluída com sucesso confirmado em todas as balanças.")
         return "CONCLUIDO", []
 
-    def _aguardar_transmissao(self, janela_transmissao, timeout=180, intervalo=2, estabilidade=3):
+    def _aguardar_transmissao(self, janela_transmissao, timeout=180, intervalo=1, estabilidade=2):
         """
         Acompanha a transmissão até as grids de comunicações pendentes
         (dgvProgresso / dgvSolicitacoes) esvaziarem e ficarem estáveis
         por `estabilidade` segundos — esse é o sinal real de conclusão
         (o texto "Terminado" nunca chega a aparecer nessas grids).
 
-        Uma linha sumir NÃO significa sucesso — pode ter terminado com
-        "Falha na comunicação" depois de esgotar as tentativas. Por
-        isso guardamos o último status conhecido de cada balança antes
-        da linha desaparecer, e avaliamos isso no final.
+        `intervalo` foi reduzido de 2s para 1s: um estado de falha pode
+        aparecer e a linha sumir da grid em uma janela curta, e um
+        polling mais lento aumenta a chance de nunca capturarmos o
+        texto de falha antes da linha desaparecer.
 
-        Retorna uma tupla (status, balancas_com_falha).
+        Retorna uma tupla (status, balancas_com_problema).
         """
         logger.info("Acompanhando transmissão...")
 
