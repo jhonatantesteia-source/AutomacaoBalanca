@@ -28,7 +28,7 @@ SENHA_GANSO = "5466"
 # Repita para cada numero da lista abaixo.
 CALLMEBOT_DESTINATARIOS = [
      {"telefone": "556781422448", "apikey": "8472623"},
-    # {"telefone": "5511888888888", "apikey": "654321"},
+     {"telefone": "556799071899", "apikey": "1139088"},
 ]
 
 # --- Aviso via E-mail (Gmail / SMTP) ---
