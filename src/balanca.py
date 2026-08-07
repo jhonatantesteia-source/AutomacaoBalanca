@@ -422,3 +422,7 @@ class Balanca:
             logger.warning("Não foi possível fechar a tela de solicitação de carga.")
 
         logger.success("Carga enviada e transmissão concluída.")
+
+time.sleep(1)
+
+send_keys("%{F4}")  # fecha a janela principal do MGV7

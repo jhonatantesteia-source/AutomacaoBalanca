@@ -161,3 +161,9 @@ class ERP:
         time.sleep(2)
 
         logger.success("Arquivo gerado e confirmado.")
+        
+        time.sleep(1)
+
+        send_keys("{ESC}")  # fecha a janela de exportação
+
+        send_keys("^{F11}")  # fecha a janela principal do Ganso
