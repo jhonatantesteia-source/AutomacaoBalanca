@@ -1,13 +1,18 @@
 import subprocess
+import time
 
 from pywinauto.application import Application
 from pywinauto import Desktop
 from loguru import logger
-import time
+
 from pywinauto.keyboard import send_keys
 
-
-from config import CAMINHO_GANSO, TIMEOUT_ABERTURA_GANSO, LOGIN_GANSO, SENHA_GANSO
+from config import (
+    CAMINHO_GANSO,
+    TIMEOUT_ABERTURA_GANSO,
+    LOGIN_GANSO,
+    SENHA_GANSO
+)
 
 
 class ERP:
@@ -19,57 +24,149 @@ class ERP:
         self.caminho_executavel = caminho_executavel
 
     def esta_aberto(self) -> bool:
-        """Verifica se o Ganso já está rodando, sem levantar exceção se não estiver."""
+        """
+        Verifica se a janela principal do Ganso está aberta.
+        """
+
         try:
             Application(backend="win32").connect(
                 class_name="TFrmPrincipalGanso"
             )
             return True
+
         except Exception:
             return False
 
-    def abrir(self, timeout=TIMEOUT_ABERTURA_GANSO, intervalo=2):
+    def ganso_esta_aberto(self) -> bool:
         """
-        Garante que o Ganso está aberto, iniciando o executável se
-        necessário. Não faz nada se já estiver rodando (permite rodar
-        o fluxo tanto agendado, com tudo fechado, quanto manualmente,
-        com os programas já abertos).
+        Verifica diretamente se o processo Ganso.exe está em execução.
         """
+
+        resultado = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq Ganso.exe"],
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        return "Ganso.exe" in resultado.stdout
+
+    def garantir_ganso_fechado(self) -> bool:
+        """
+        Garante que nenhuma instância do Ganso.exe esteja em execução
+        antes de iniciar uma nova automação.
+
+        Primeiro tenta encerrar normalmente.
+        Se não encerrar em até 5 segundos, força o encerramento.
+        """
+
+        if not self.ganso_esta_aberto():
+            logger.info("Ganso já está fechado.")
+            return True
+
+        logger.warning("Ganso está aberto. Encerrando processo...")
+
+        # Tenta encerrar normalmente
+        resultado = subprocess.run(
+            ["taskkill", "/IM", "Ganso.exe"],
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        if resultado.returncode == 0:
+            logger.info("Comando de encerramento enviado ao Ganso.")
+        else:
+            logger.warning(
+                f"Não foi possível encerrar normalmente: "
+                f"{resultado.stderr.strip()}"
+            )
+
+        # Aguarda até 5 segundos pelo encerramento
+        for _ in range(10):
+
+            time.sleep(0.5)
+
+            if not self.ganso_esta_aberto():
+                logger.success("Ganso fechado com sucesso.")
+                return True
+
+        # Se ainda estiver aberto, força o encerramento
+        logger.warning(
+            "Ganso não encerrou normalmente. "
+            "Forçando encerramento..."
+        )
+
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "Ganso.exe"],
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        # Aguarda o Windows finalizar completamente o processo
+        time.sleep(2)
+
+        # Confirma novamente
+        if self.ganso_esta_aberto():
+            logger.error(
+                "Não foi possível fechar o Ganso.exe."
+            )
+            return False
+
+        logger.success("Ganso encerrado com sucesso.")
+
+        return True
+
+    def abrir(
+        self,
+        timeout=TIMEOUT_ABERTURA_GANSO,
+        intervalo=2
+    ):
+        """
+        Garante que o Ganso está aberto, iniciando o executável
+        se necessário.
+        """
+
         if self.esta_aberto():
             logger.info("Ganso já está aberto.")
             return
 
-        logger.info(f"Abrindo o Ganso ({self.caminho_executavel})...")
+        logger.info(
+            f"Abrindo o Ganso ({self.caminho_executavel})..."
+        )
 
         subprocess.Popen(self.caminho_executavel)
 
         inicio = time.time()
 
         while (time.time() - inicio) < timeout:
+
             self._fechar_aviso_atencao()
 
             if self.esta_aberto():
                 logger.success("Ganso abriu.")
+
                 self._fazer_login()
+
                 return
 
             time.sleep(intervalo)
 
-        raise TimeoutError(f"Ganso não abriu em {timeout}s.")
+        raise TimeoutError(
+            f"Ganso não abriu em {timeout}s."
+        )
 
     def _fechar_aviso_atencao(self):
         """
-        Fecha a janela de aviso 'ATENÇÃO' (classe Dialog) que costuma
-        aparecer antes da tela de login, se ela estiver na tela.
-        Não faz nada (e não levanta exceção) se ela não existir.
-
-        Usa Desktop(...).windows() em vez de Application.connect(),
-        porque esse último não estava conseguindo localizar essa
-        janela de forma confiável nesta máquina (provavelmente por
-        haver várias outras janelas de classe 'Dialog' no sistema).
+        Fecha a janela de aviso 'ATENÇÃO' que costuma aparecer
+        antes da tela de login, se ela estiver na tela.
         """
+
         try:
+
             for janela in Desktop(backend="win32").windows():
+
                 titulo = janela.window_text()
 
                 if not titulo or not titulo.startswith("ATEN"):
@@ -81,79 +178,141 @@ class ERP:
                 if not janela.is_visible():
                     continue
 
-                logger.info(f"Aviso detectado ('{titulo}'), fechando...")
-                janela.set_focus()
-                time.sleep(0.3)
-                janela.type_keys("{ENTER}")
+                logger.info(
+                    f"Aviso detectado ('{titulo}'), fechando..."
+                )
+
+                botao_ok = None
+
+                for filho in janela.children():
+
+                    if (
+                        filho.window_text() == "OK"
+                        and filho.friendly_class_name() == "Button"
+                    ):
+                        botao_ok = filho
+                        break
+
+                if botao_ok is not None:
+
+                    botao_ok.click()
+
+                else:
+
+                    # Fallback: não achou o botão OK
+                    # tenta pelo teclado
+                    janela.set_focus()
+
+                    time.sleep(0.3)
+
+                    janela.type_keys("{ENTER}")
+
                 time.sleep(0.5)
+
                 logger.success("Aviso fechado.")
+
                 return
+
         except Exception as e:
-            logger.debug(f"Nenhum aviso encontrado ou erro ao fechar: {e}")
+
+            logger.debug(
+                f"Nenhum aviso encontrado ou erro ao fechar: {e}"
+            )
 
     def _fazer_login(self):
         """
         Preenche usuário e senha na tela de login do Ganso.
-        Só é chamado depois que a janela do Ganso foi detectada
-        (ou seja, dentro de abrir(), nunca no import do módulo).
-
-        A tela de login é uma janela própria, separada da janela
-        principal (TFrmPrincipalGanso): título 'Acesso ao Sistema',
-        classe 'TFrmAcesso'.
         """
+
         logger.info("Realizando login no Ganso...")
 
-        # Espera a tela 'Acesso ao Sistema' aparecer (pode levar um
-        # instante depois do aviso 'ATENÇÃO' fechar). Continua tentando
-        # fechar o aviso aqui também, porque ele pode surgir só agora
-        # (depois que a janela principal já foi detectada em abrir()).
         janela_login = None
+
         inicio = time.time()
 
         while (time.time() - inicio) < 10:
+
             self._fechar_aviso_atencao()
 
             try:
-                app_login = Application(backend="win32").connect(
+
+                app_login = Application(
+                    backend="win32"
+                ).connect(
                     class_name="TFrmAcesso"
                 )
-                candidata = app_login.window(class_name="TFrmAcesso")
+
+                candidata = app_login.window(
+                    class_name="TFrmAcesso"
+                )
+
                 if candidata.exists():
+
                     janela_login = candidata
+
                     break
+
             except Exception:
                 pass
 
             time.sleep(0.5)
 
         if janela_login is None:
+
             logger.warning(
                 "Tela 'Acesso ao Sistema' não encontrada; "
                 "login pode já ter sido feito ou o fluxo mudou."
             )
+
             return
 
-        janela_login.wait("visible", timeout=10)
+        janela_login.wait(
+            "visible",
+            timeout=10
+        )
+
         janela_login.set_focus()
 
-        # Dá tempo da janela terminar de ganhar foco de fato
+        # Dá tempo da janela terminar de ganhar foco
         time.sleep(1)
 
-        janela_login.type_keys(LOGIN_GANSO, with_spaces=True)  # digita usuario
+        # Usuário
+        janela_login.type_keys(
+            LOGIN_GANSO,
+            with_spaces=True
+        )
+
         time.sleep(0.3)
-        janela_login.type_keys("{TAB}")                        # navega para o campo de senha
+
+        # Campo de senha
+        janela_login.type_keys("{TAB}")
+
         time.sleep(0.3)
-        janela_login.type_keys(SENHA_GANSO, with_spaces=True)  # digita senha
+
+        # Senha
+        janela_login.type_keys(
+            SENHA_GANSO,
+            with_spaces=True
+        )
+
         time.sleep(0.3)
-        janela_login.type_keys("{ENTER}{ENTER}")                # envia o formulário
+
+        # Envia formulário
+        janela_login.type_keys(
+            "{ENTER}{ENTER}"
+        )
 
         logger.success("Login enviado.")
 
     def conectar_principal(self):
 
-        logger.info("Conectando à janela principal do Ganso...")
+        logger.info(
+            "Conectando à janela principal do Ganso..."
+        )
 
-        self.app = Application(backend="win32").connect(
+        self.app = Application(
+            backend="win32"
+        ).connect(
             class_name="TFrmPrincipalGanso"
         )
 
@@ -163,36 +322,64 @@ class ERP:
 
         self.janela_principal.set_focus()
 
-        logger.success("Janela principal encontrada.")
+        logger.success(
+            "Janela principal encontrada."
+        )
 
     def abrir_gerador_balanca(self):
 
-        logger.info("Abrindo Gerar Arquivo para Balança...")
+        logger.info(
+            "Abrindo Gerar Arquivo para Balança..."
+        )
 
         self.janela_principal.set_focus()
 
         time.sleep(1)
 
-        # ALT + U
-        self.janela_principal.type_keys("%u", pause=0.2)
+        try:
+
+            # ALT + U
+            self.janela_principal.type_keys(
+                "%u",
+                pause=0.2
+            )
+
+        finally:
+
+            # Garante que o Alt seja solto
+            send_keys("{VK_MENU up}")
 
         time.sleep(1)
 
+        # Navegação já testada:
+        # 13 DOWN
         for _ in range(13):
-            self.janela_principal.type_keys("{DOWN}")
+
+            self.janela_principal.type_keys(
+                "{DOWN}"
+            )
+
             time.sleep(0.3)
 
-        self.janela_principal.type_keys("{ENTER}")
+        self.janela_principal.type_keys(
+            "{ENTER}"
+        )
 
-        logger.success("Janela de exportação aberta.")
+        logger.success(
+            "Janela de exportação aberta."
+        )
 
         time.sleep(1)
 
     def conectar_exportacao(self):
 
-        logger.info("Conectando à janela de exportação...")
+        logger.info(
+            "Conectando à janela de exportação..."
+        )
 
-        self.app = Application(backend="win32").connect(
+        self.app = Application(
+            backend="win32"
+        ).connect(
             title_re=".*Gerar Arquivo para Balança.*"
         )
 
@@ -200,7 +387,9 @@ class ERP:
 
         self.janela_exportacao.set_focus()
 
-        logger.success("Janela localizada.")
+        logger.success(
+            "Janela localizada."
+        )
 
     def gerar_arquivo_balanca(self):
 
@@ -214,28 +403,40 @@ class ERP:
         time.sleep(2)
 
         # Localiza a janela da mensagem de sucesso
-        # (usa só o prefixo sem acento para evitar problemas de encoding
-        # na comparação do título — ver correção em _fechar_aviso_atencao)
-        msg = self.app.window(title_re="ATEN.*")
-        msg.wait("visible", timeout=10)
+        msg = self.app.window(
+            title_re="ATEN.*"
+        )
 
-        logger.success("Mensagem de confirmação encontrada.")
+        msg.wait(
+            "visible",
+            timeout=10
+        )
 
-        # Da o foco na janela
+        logger.success(
+            "Mensagem de confirmação encontrada."
+        )
+
+        # Dá foco na janela
         msg.set_focus()
 
         time.sleep(0.5)
 
-        # Clica no botão "ENTER" (botão padrao da janela)
+        # Confirma a mensagem
         msg.type_keys("{ENTER}")
 
         time.sleep(2)
 
-        logger.success("Arquivo gerado e confirmado.")
+        logger.success(
+            "Arquivo gerado e confirmado."
+        )
 
-        time.sleep(1)
+        # Fecha janela de exportação
+        send_keys("{ESC}")
 
-        send_keys("{ESC}")  # fecha a janela de exportação
+        # Fecha janela principal do Ganso
+        send_keys("^{F11}")
 
-        send_keys("^{F11}")  # fecha a janela principal do Ganso
-        
+        logger.success(
+            "Janela de exportação e janela principal "
+            "fechadas."
+        )

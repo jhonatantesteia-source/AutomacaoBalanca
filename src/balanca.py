@@ -423,6 +423,8 @@ class Balanca:
 
         logger.success("Carga enviada e transmissão concluída.")
 
-time.sleep(1)
+        time.sleep(1)
 
-send_keys("%{F4}")  # fecha a janela principal do MGV7
+        send_keys("%{F4}")  # fecha a janela principal do MGV7
+
+        logger.success("Janela principal do MGV7 fechada.")
