@@ -4,7 +4,7 @@ from email.mime.text import MIMEText
 import requests
 from loguru import logger
 
-from config import (
+from src.config import (
     CALLMEBOT_DESTINATARIOS,
     EMAIL_REMETENTE,
     EMAIL_SENHA_APP,

@@ -6,7 +6,7 @@ import time
 from pywinauto.keyboard import send_keys
 
 
-from config import CAMINHO_GANSO, TIMEOUT_ABERTURA_GANSO, LOGIN_GANSO, SENHA_GANSO
+from config_OLD import CAMINHO_GANSO, TIMEOUT_ABERTURA_GANSO, LOGIN_GANSO, SENHA_GANSO
 
 
 class ERP:

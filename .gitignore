@@ -1,19 +1,21 @@
-.venv/
-__pycache__/
-*.py[cod]
-*.log
-
-logs/
-.vscode/
-.idea/
-
+# Segredos e configurações locais
 .env
 .env.*
+!.env.example
+src/config.local.py
 
-# Credenciais (Gmail App Password, CallMeBot API Key, login do Ganso)
-src/config.py
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
 
+# Logs e artefatos
+logs/
 dist/
 build/
-
 *.spec
+.vscode/
+.idea/

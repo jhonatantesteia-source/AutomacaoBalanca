@@ -1,17 +1,15 @@
 @echo off
+setlocal
 cd /d "%~dp0"
 
 if not exist logs mkdir logs
-echo [%date% %time%] Iniciado pelo Agendador de Tarefas >> logs\agendador.log
+if not exist .venv\Scripts\python.exe (
+    echo Ambiente virtual nao encontrado: .venv
+    echo Execute: py -m venv .venv ^&^& .venv\Scripts\python -m pip install -r requirements.txt
+    exit /b 10
+)
 
-call .venv\Scripts\activate.bat
-
-python src\main.py
-
-echo [%date% %time%] Finalizado (codigo de saida: %errorlevel%) >> logs\agendador.log
-
-echo.
-echo ==========================================
-echo Processo finalizado.
-echo ==========================================
-pause
+.venv\Scripts\python.exe -m src.main
+set "RESULTADO=%ERRORLEVEL%"
+echo [%date% %time%] Finalizado (codigo de saida: %RESULTADO%) >> logs\agendador.log
+exit /b %RESULTADO%

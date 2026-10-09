@@ -6,8 +6,8 @@ from pywinauto import Desktop
 from pywinauto.keyboard import send_keys
 from pywinauto.timings import TimeoutError as PywinautoTimeoutError
 
-from config import CAMINHO_MGV, TIMEOUT_ABERTURA_MGV
-from logger import logger
+from src.config import CAMINHO_MGV, TIMEOUT_ABERTURA_MGV, TIMEOUT_TRANSMISSAO_BALANCA
+from src.logger import logger
 
 
 class FalhaTransmissaoBalanca(Exception):
@@ -123,7 +123,7 @@ class Balanca:
 
         logger.info("Aguardando importação...")
 
-        sleep(5)
+        sleep(8)
 
         send_keys("{ENTER}")
 
@@ -306,7 +306,7 @@ class Balanca:
         logger.success("Transmissão concluída com sucesso confirmado em todas as balanças.")
         return "CONCLUIDO", []
 
-    def _aguardar_transmissao(self, janela_transmissao, timeout=180, intervalo=1, estabilidade=2):
+    def _aguardar_transmissao(self, janela_transmissao, timeout=TIMEOUT_TRANSMISSAO_BALANCA, intervalo=1, estabilidade=2):
         """
         Acompanha a transmissão até as grids de comunicações pendentes
         (dgvProgresso / dgvSolicitacoes) esvaziarem e ficarem estáveis

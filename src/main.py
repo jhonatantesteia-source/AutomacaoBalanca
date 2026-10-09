@@ -1,82 +1,66 @@
-from erp import ERP
-from balanca import Balanca, FalhaTransmissaoBalanca
-from logger import logger
-from notificacao import enviar_whatsapp, enviar_email
+"""Ponto de entrada: coordena os serviços sem concentrar a lógica neles."""
+from __future__ import annotations
+
+import sys
+
+from src.balanca import Balanca, FalhaTransmissaoBalanca
+from src.config import validar_configuracao
+from src.erp import ERP
+from src.logger import logger
+from src.notificacao import enviar_email, enviar_whatsapp
 
 
-def main():
+def notificar(assunto: str, mensagem: str) -> None:
+    """Notificações são auxiliares: não devem mascarar o resultado principal."""
+    enviar_whatsapp(mensagem)
+    enviar_email(assunto=assunto, mensagem=mensagem)
+
+
+def executar_automacao() -> None:
+    """Executa o fluxo de ponta a ponta; cada etapa pode ser testada isoladamente."""
+    erp = ERP()
+    balanca = Balanca()
+
+    if not erp.garantir_ganso_fechado():
+        raise RuntimeError("Não foi possível garantir que o Ganso está fechado.")
+
+    erp.abrir()
+    erp.conectar_principal()
+    erp.abrir_gerador_balanca()
+    erp.conectar_exportacao()
+    erp.gerar_arquivo_balanca()
+
+    balanca.abrir()
+    balanca.conectar()
+    balanca.importar_arquivo()
+    balanca.enviar_carga()
+
+
+def main() -> int:
+    logger.info("Iniciando automação da balança")
     try:
-        logger.info("Iniciando automação")
-
-        erp = ERP()
-
-        # Garante que não exista uma instância anterior do Ganso
-        if not erp.garantir_ganso_fechado():
-            raise RuntimeError(
-                "Não foi possível garantir que o Ganso está fechado."
-            )
-
-        erp.abrir()
-        erp.conectar_principal()
-        erp.abrir_gerador_balanca()
-        erp.conectar_exportacao()
-        erp.gerar_arquivo_balanca()
-
-        balanca = Balanca()
-
-        balanca.abrir()
-        balanca.conectar()
-        balanca.importar_arquivo()
-        balanca.enviar_carga()
-
-        logger.success("Processo concluído com sucesso!")
-
-        enviar_whatsapp(
-            "✅ Automação da balança concluída com sucesso! "
-            "Arquivo gerado e carga enviada para todas as balanças."
+        validar_configuracao()
+        executar_automacao()
+    except FalhaTransmissaoBalanca as exc:
+        logger.exception("Transmissão concluída com falhas")
+        balancas = ", ".join(exc.balancas_com_falha)
+        notificar(
+            "Falha de comunicação em balança(s)",
+            f"A transmissão terminou, mas não foi possível confirmar o sucesso em: {balancas}.",
         )
+        return 2
+    except Exception as exc:
+        logger.exception("Falha na automação")
+        notificar("Falha na automação da balança", f"A automação falhou: {exc}")
+        return 1
 
-        enviar_email(
-            assunto="✅ Automação da balança concluída com sucesso",
-            mensagem=(
-                "O arquivo da balança foi gerado e a carga foi enviada "
-                "com sucesso para todas as balanças."
-            ),
-        )
-
-    except FalhaTransmissaoBalanca as e:
-        logger.exception(f"Erro durante a automação: {e}")
-
-        balancas = ", ".join(e.balancas_com_falha)
-
-        enviar_whatsapp(
-            f"⚠️ Falha na comunicação com a(s) balança(s): {balancas}.\n"
-            "O restante do processo (arquivo gerado, carga enviada) "
-            "ocorreu normalmente. Verifique/reinicie a(s) balança(s) indicada(s)."
-        )
-
-        enviar_email(
-            assunto="⚠️ Falha de comunicação em balança(s)",
-            mensagem=(
-                f"A carga foi enviada, mas houve falha na comunicação com a(s) "
-                f"seguinte(s) balança(s): {balancas}.\n\n"
-                "O restante do processo ocorreu normalmente. Verifique/reinicie "
-                "a(s) balança(s) indicada(s) e, se necessário, refaça o envio."
-            ),
-        )
-
-    except Exception as e:
-        logger.exception(f"Erro durante a automação: {e}")
-
-        enviar_whatsapp(f"⚠️ Falha na automação da balança: {e}")
-
-        enviar_email(
-            assunto="⚠️ Falha na automação da balança",
-            mensagem=(
-                f"A automação da balança falhou com o seguinte erro:\n\n{e}"
-            ),
-        )
+    logger.success("Automação concluída com sucesso")
+    notificar(
+        "Automação da balança concluída com sucesso",
+        "Arquivo gerado e carga enviada para as balanças.",
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

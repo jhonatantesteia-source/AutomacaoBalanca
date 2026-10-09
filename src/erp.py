@@ -7,7 +7,7 @@ from loguru import logger
 
 from pywinauto.keyboard import send_keys
 
-from config import (
+from src.config import (
     CAMINHO_GANSO,
     TIMEOUT_ABERTURA_GANSO,
     LOGIN_GANSO,
@@ -105,7 +105,7 @@ class ERP:
         )
 
         # Aguarda o Windows finalizar completamente o processo
-        time.sleep(2)
+        time.sleep(3)
 
         # Confirma novamente
         if self.ganso_esta_aberto():
