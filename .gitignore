@@ -1,4 +1,21 @@
+# Segredos e configurações locais
+.env
+.env.*
+!.env.example
+src/config.local.py
+
+# Python
 .venv/
---pycache--/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Logs e artefatos
 logs/
-*.pyc
+dist/
+build/
+*.spec
+.vscode/
+.idea/
